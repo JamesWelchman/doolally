@@ -514,9 +514,9 @@ class String(AtomicElement):
     def type_info(self, recurse=False):
         name = self.__class__.__name__
         tags = []
-        if self.min_length is not None:
+        if self.min_length != 0:
             tags.append(f"min_length={self.min_length}")
-        if self.max_length is not None:
+        if self.max_length != -1:
             tags.append(f"max_length={self.max_length}")
 
         return f"{name}(" + ",".join(tags) + ")"
@@ -727,7 +727,7 @@ class Schema(ObjectCollection, metaclass=SchemaMeta):
             elem_field = self.doolally_fields.get(token.ident)
             if not elem_field:
                 # This key is not used in the schema
-                error = "unrecognised key {!s} in schema"
+                error = "unrecognised key ({!s})"
                 raise ctx.ctx_err(error, token.ident)
             else:
                 # We've this key if it's required
@@ -782,14 +782,15 @@ class Schema(ObjectCollection, metaclass=SchemaMeta):
             fields = []
             iterator = self.doolally_fields.items()
             for attr_name, elem_field in iterator:
+                field = attr_name + '('
                 tags = []
                 if attr_name in self.doolally_required_fields:
-                    tags.append("required")
+                    field += "required,"
                 else:
-                    tags.append("optional")
-                info = elem_field.type_info(recurse=True)
-                tags.append(f"{attr_name}={info}")
-                fields.append("Field(" + ",".join(tags) + ")")
+                    field += "optional,"
+                field += elem_field.type_info(recurse=True)
+                field += ')'
+                fields.append(field)
 
             return f"{name}(" + ", ".join(fields) + ")"
 

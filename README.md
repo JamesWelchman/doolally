@@ -1,27 +1,11 @@
 # Doolally
 
-Doolally is a JSON sanity checker.
+Doolally is a JSON sanity checker and
+[json-schema](https://json-schema.org/) generator.
 It has a strong focus on good, readable, descriptive errors.
 (If your JSON isn't sane, then you'll go doolally!, Geddit!?) 
 
-Project Goals:
-
-    * Zero-copy JSON sanity checker 
-    * Strong error reporting including path/expected type etc.
-    * Context depdendent sanity checking via collection validators
-    * API to generate doolally classes at Runtime
-
-Project Non-Goals:
-
-    * Python Object (de)serializer
-    * Allow for collection modification
-
-TODO:
-
-    * Implement [json-schema](https://json-schema.org) generator
-    * Recursive schema definitions
-
-Example:
+A trivial example:
 
 ```python
 from doolally import (
@@ -45,6 +29,25 @@ try:
 except ValidationValueError as exc:
     print(exc)
 ```
+
+Output:
+
+```
+[:Person(name(required,String()), age(required,Number(unsigned,int)))] - unrecognised key (wrongKey)
+```
+
+Project Goals:
+
+    * Zero-copy JSON sanity checker 
+    * Strong error reporting including path/expected type etc.
+    * Context depdendent sanity checking via collection validators
+    * API to generate doolally classes at Runtime
+    * Generate json-schema documents
+
+Project Non-Goals:
+
+    * Python Object (de)serializer
+    * Allow for collection modification
 
 [1. Installation](#Installation)
 
