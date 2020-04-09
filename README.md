@@ -34,8 +34,9 @@ except ValidationValueError as exc:
     print(exc)
 
 # A newline + jsonschema
+from pprint import pprint
 print()
-print(jsonschema(Person))
+print(pprint(jsonschema(Person)))
 ```
 
 Output:
@@ -43,7 +44,18 @@ Output:
 ```
 [:Person(name(required,String()), age(required,Number(unsigned,int)))] - unrecognised key (wrongKey)
 
-{'type': 'object', 'required': ['name', 'age'], 'properties': {'name': {'type': 'string', 'title': 'name', 'description': 'Full name of Person'}, 'age': {'type': 'integer', 'minimum': 0, 'title': 'age', 'description': 'How old the person is'}}, 'additionalProperties': False, 'title': 'Person', 'description': 'A Person instance'}
+{'additionalProperties': False,
+ 'description': 'A Person instance',
+ 'properties': {'age': {'description': 'How old the person is',
+                        'minimum': 0,
+                        'title': 'age',
+                        'type': 'integer'},
+                'name': {'description': 'Full name of Person',
+                         'title': 'name',
+                         'type': 'string'}},
+ 'required': ['name', 'age'],
+ 'title': 'Person',
+ 'type': 'object'}
 ```
 
 Project Goals:
