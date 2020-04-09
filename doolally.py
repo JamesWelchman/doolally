@@ -78,7 +78,36 @@ Token = namedtuple("Token", ("ident", "value"))
 class Tokenizer:
     """
     Tokenizer will tokenize a python list or dictionary
+
+    >>> t = Tokenizer(['a', 'b', 'c'])
+    >>> t.next()
+    Token(ident='[', value=['a', 'b', 'c'])
+    >>> t.next()
+    Token(ident=0, value='a')
+    >>> t.next()
+    Token(ident=1, value='b')
+    >>> t.next()
+    Token(ident=2, value='c')
+    >>> t.next()
+    Token(ident=']', value=None)
+    >>> t.next()
+    Traceback (most recent call last):
+    ...
+    StopIteration
+
+    >>> data = {"hello": [1, 2], "world": ['a', 'b']}
+    >>> t = Tokenizer(data)
+    >>> t.next() == Token('{', value=data)
+    True
+    >>> t.next()
+    Token(ident='hello', value=[1, 2])
+    >>> t.next()
+    Token(ident='[', value=[1, 2])
+    >>> t.drain_collection()
+    >>> t.next()
+    Token(ident='world', value=['a', 'b'])
     """
+
     def __init__(self, json, json_path=None):
         self.json = json
         self._current = None
@@ -112,6 +141,8 @@ class Tokenizer:
         stack = [self._current.ident]
         while stack:
             token = self.next()
+            if isinstance(token.ident, int):
+                continue
             if token.ident in "{[":
                 stack.append(token.ident)
             elif token.ident in "}]":
@@ -130,9 +161,7 @@ class Tokenizer:
     def tokenize_object(self, item):
         yield Token('{', item)
 
-        for key in list(item.keys()):
-            value = item[key]
-
+        for key, value in item.items():
             # JSON dict keys must be strings
             if not isinstance(key, str):
                 actual_type = type(key).__name__
@@ -150,15 +179,17 @@ class Tokenizer:
 
         for index, value in enumerate(item, 0):
             self.json_path.append(index)
-            yield from self.tokenize_typeswitch(index, elem)
+            yield from self.tokenize_typeswitch(index, value)
             self.json_path.pop()
 
         yield Token(']', None)
 
     def tokenize_typeswitch(self, ident, value):
         if isinstance(value, dict):
+            yield Token(ident, value)
             yield from self.tokenize_object(value)
         elif isinstance(value, list):
+            yield Token(ident, value)
             yield from self.tokenize_array(value)
         elif isinstance(value, JSON_PRIMATIVES):
             yield Token(ident, value)
@@ -177,6 +208,13 @@ class Context:
     keeps track of ident/value pairs in a list, Context
     keeps track of ident/elem_field pairs so we know what
     our validation element_field is.
+
+    >>> ctx = Context()
+    >>> ctx.push_element_field("hello", String())
+    >>> raise ctx.ctx_err("testing error")
+    Traceback (most recent call last):
+    ...
+    doolally.ValidationValueError: [hello:String()] - testing error
     """
 
     def __init__(self, elem_fields=None):
@@ -238,6 +276,9 @@ class SchemaMeta(type):
             k for k, v in fields.items() if v.required
         )
         return super().__new__(cls, name, bases, attrs)
+
+    def __repr__(self):
+        return repr(self())
 
 
 # Element Fields
@@ -333,6 +374,22 @@ class CollectionElement(ElementField):
 
 
 class Union(ElementField):
+    """
+    Union may be either a CollectionField or an AtomicField
+
+    >>> u = Union(element_fields=[String(), Number(is_int=True)])
+    >>> u
+    Union(String(), Number(int))
+    >>> ctx = Context()
+    >>> ctx.push_element_field("someKey", u)
+    >>> u.validate_atomic(ctx, 1)
+    >>> u.validate_atomic(ctx, "hello")
+
+    >>> number_array = StaticTypeArray(element_field=Number())
+    >>> u = Union(element_fields=[Number(), number_array])
+    >>> u
+    Union(Number(), StaticTypeArray(Number()))
+    """
     def __init__(self,
                  required=False,
                  element_fields=None,
@@ -344,7 +401,7 @@ class Union(ElementField):
         self._atomic_fields = []
         self._collection_fields = []
 
-        for elem_field in self.element_fields:
+        for elem_field in element_fields:
             if elem_field.is_atomic():
                 self._atomic_fields.append(elem_field)
             elif elem_field.is_collection():
@@ -403,7 +460,9 @@ class Union(ElementField):
         info = ""
         if not recurse:
             info = ", ".join(
-                e.type_info(recurse=True)
+                # We print the complete type information
+                # if we are in a top level union.
+                e.type_info(recurse=False)
                 for e in chain(
                     self._atomic_fields,
                     self._collection_fields,
@@ -416,6 +475,21 @@ class Union(ElementField):
 
 
 class Number(AtomicElement):
+    """
+    >>> n = Number()
+    >>> ctx = Context()
+    >>> ctx.push_element_field("amount", n)
+    >>> n.validate_atomic(ctx, 1)
+    >>> n.validate_atomic(ctx, -15.4)
+    >>> n
+    Number()
+
+    >>> Number(signed=False, is_int=True)
+    Number(unsigned,int)
+
+    >>> Number(min_value=0, max_value=90)
+    Number(min_value=0,max_value=90)
+    """
     def __init__(self,
                  required=False,
                  signed=True,
@@ -482,6 +556,18 @@ class Number(AtomicElement):
 
 
 class String(AtomicElement):
+    """
+    >>> s = String()
+    >>> s
+    String()
+    >>> ctx = Context()
+    >>> ctx.push_element_field("key", s)
+    >>> s.validate_atomic(ctx, "hello")
+
+    >>> s = String(min_length=3, max_length=6)
+    >>> s
+    String(min_length=3,max_length=6)
+    """
     def __init__(self,
                  required=False,
                  min_length=0,
@@ -523,6 +609,15 @@ class String(AtomicElement):
 
 
 class Bool(AtomicElement):
+    """
+    >>> b = Bool()
+    >>> b
+    Bool()
+    >>> ctx = Context()
+    >>> ctx.push_element_field("flag", b)
+    >>> b.validate_atomic(ctx, True)
+    >>> b.validate_atomic(ctx, False)
+    """
     def validate_atomic(self, ctx, value):
         validate_type(ctx, value, bool)
 
@@ -531,6 +626,14 @@ class Bool(AtomicElement):
 
 
 class Null(AtomicElement):
+    """
+    >>> n = Null()
+    >>> n
+    Null()
+    >>> ctx = Context()
+    >>> ctx.push_element_field("flag", n)
+    >>> n.validate_atomic(ctx, None)
+    """
     def validate_atomic(self, ctx, value):
         validate_type(ctx, value, type(None))
 
@@ -541,6 +644,12 @@ class Null(AtomicElement):
 def union_with_null(required=False,
                     element_fields=None,
                     validator=None):
+    """
+    >>> s = String()
+    >>> u = union_with_null(element_fields=[s])
+    >>> u
+    Union(String(), Null())
+    """
     element_fields = element_fields or []
     return Union(
         required=required,
@@ -550,11 +659,18 @@ def union_with_null(required=False,
 
 
 class AnyAtomic(AtomicElement):
-    def __init__(self, required=False):
+    """
+    >>> AnyAtomic()
+    AnyAtomic()
+    """
+    def __init__(self, required=False, validator=None):
         super().__init__(
             required=required,
-            validator=None,
+            validator=validator,
         )
+
+    def validate_atomic(self, ctx, value):
+        validate_type(ctx, value, *JSON_PRIMATIVES)
 
     def type_info(self, recurse=False):
         return f"{self.__class__.__name__}()"
@@ -579,6 +695,15 @@ class ObjectCollection(CollectionElement):
 
 
 class StaticTypeArray(ArrayCollection):
+    """
+    >>> s = StaticTypeArray(element_field=Number())
+    >>> s
+    StaticTypeArray(Number())
+    >>> ctx = Context()
+    >>> ctx.push_element_field("number", s)
+    >>> t = Tokenizer([1, 2, 3])
+    >>> s.validate_collection(ctx, t)
+    """
     def __init__(self,
                  required=True,
                  min_length=0,
@@ -591,7 +716,7 @@ class StaticTypeArray(ArrayCollection):
         )
         self.min_length = min_length
         self.max_length = max_length
-        self.element_field = element_field or []
+        self.element_field = element_field
 
     def validate_collection(self, ctx, tokenizer):
         collection = self.validate_leading_token(ctx, tokenizer)
@@ -624,7 +749,7 @@ class StaticTypeArray(ArrayCollection):
             ctx.push_element_field(token.ident, elem_field)
             try:
                 if switch_type == "atomic":
-                    elem_field.validate_atomic(ctx, value)
+                    elem_field.validate_atomic(ctx, token.value)
                 else:
                     elem_field.validate_collection(ctx, tokenizer)
             finally:
@@ -643,16 +768,32 @@ class StaticTypeArray(ArrayCollection):
             return f"{name}(..)"
 
         tags = []
-        if self.min_length:
+        if self.min_length != 0:
             tags.append(f"min_length={self.min_length}")
-        if self.max_length:
+        if self.max_length != -1:
             tags.append(f"max_length={self.max_length}")
+
         elem_info = self.element_field.type_info(recurse=True)
-        tags.append("elem_type=" + elem_info)
+        tags.append(elem_info)
         return f"{name}(" + ",".join(tags) + ")"
 
 
 class TagObject(ObjectCollection):
+    """
+    TagObject is a JSON object where the values
+    must all be strings. The usual min_length and
+    max_length params for collections are avaliable.
+
+    >>> t = TagObject()
+    >>> t
+    TagObject()
+    >>> TagObject(max_length=10)
+    TagObject(max_length=10)
+    >>> ctx = Context()
+    >>> ctx.push_element_field("tags", t)
+    >>> tk = Tokenizer({"hello": "yes", "world": "no"})
+    >>> t.validate_collection(ctx, tk)
+    """
     def validate_collection(self, ctx, tokenizer):
         collection = self.validate_leading_token(ctx, tokenizer)
         self.validate_length(ctx, collection)
@@ -681,17 +822,29 @@ class TagObject(ObjectCollection):
             return f"{name}(..)"
 
         tags = []
-        if self.min_length:
+        if self.min_length != 0:
             tags.append(f"min_length={self.min_length}")
-        if self.max_length:
+        if self.max_length != -1:
             tags.append(f"max_length={self.max_length}")
 
         return f"{name}(" + ",".join(tags) + ")"
 
 
 class SchemaLessObject(ObjectCollection):
+    """
+    >>> SchemaLessObject()
+    SchemaLessObject()
+
+    >>> s = SchemaLessObject(min_length=2)
+    >>> ctx = Context()
+    >>> ctx.push_element_field("tags", s)
+    >>> t = Tokenizer({"hello": 1, "world": 2})
+    >>> s.validate_collection(ctx, t)
+    >>> t = Tokenizer({"boo": "a", "goose": "b", "hen": "c"})
+    >>> s.validate_collection(ctx, t)
+    """
     def validate_collection(self, ctx, tokenizer):
-        collection = validate_leading_token(ctx, tokenizer)
+        collection = self.validate_leading_token(ctx, tokenizer)
         self.validate_length(ctx, collection)
 
         # The only thing left to do is drain this object
@@ -703,9 +856,9 @@ class SchemaLessObject(ObjectCollection):
             return f"{name}(..)"
 
         tags = []
-        if self.min_length:
+        if self.min_length != 0:
             tags.append(f"min_length={self.min_length}")
-        if self.max_length:
+        if self.max_length != -1:
             tags.append(f"max_length={self.max_length}")
 
         return f"{name}(" + ",".join(tags) + ")"
@@ -801,7 +954,30 @@ class Schema(ObjectCollection, metaclass=SchemaMeta):
         return f"{name}({info})"
 
 
+def schema_factory(name, fields, bases=None):
+    """
+    >>> fields = {"name": String(required=True), "age": Number()}
+    >>> my_schema = schema_factory("MySchema", fields)
+    >>> my_schema
+    MySchema(name(required,String()), age(optional,Number()))
+    """
+    bases = bases or (Schema,)
+    fields = fields or {}
+    return SchemaMeta(name, bases, fields)
+
+
 class AnyCollection(CollectionElement):
+    """
+    >>> a = AnyCollection()
+    >>> a
+    AnyCollection()
+    >>> ctx = Context()
+    >>> ctx.push_element_field(2, a)
+    >>> t = Tokenizer({"hello": 1})
+    >>> a.validate_collection(ctx, t)
+    >>> t = Tokenizer([1, 2, 3])
+    >>> a.validate_collection(ctx, t)
+    """
     def validate_collection(self, ctx, tokenizer):
         # We DO care that a collection comes
         # from the tokenizer, beyond that it's not
@@ -819,15 +995,26 @@ class AnyCollection(CollectionElement):
         name = self.__class__.__name__
 
         tags = []
-        if self.min_length:
+        if self.min_length != 0:
             tags.append(f"min_length={self.min_length}")
-        if self.max_length:
+        if self.max_length != -1:
             tags.append(f"max_length={self.max_length}")
 
         return f"{name}(" + ",".join(tags) + ")"
 
 
 class Any(Union):
+    """
+    >>> a = Any()
+    >>> a
+    Any()
+    >>> ctx = Context()
+    >>> ctx.push_element_field("data", a)
+    >>> a.validate_atomic(ctx, 1)
+    >>> a.validate_atomic(ctx, "hello")
+    >>> t = Tokenizer(["a", "b", "c"])
+    >>> a.validate_collection(ctx, t)
+    """
     def __init__(self, required=False, validator=None):
         super().__init__(
             required=required,
@@ -851,7 +1038,7 @@ def validate_type(ctx, value, *types):
     if isinstance(value, types):
         return
 
-    valid_types = ",".join(map(lambda x: x.__name__), types)
+    valid_types = ",".join(map(lambda x: x.__name__, types))
     error = "expected type in ({!s})"
     raise ctx.ctx_err(
         error,
@@ -866,7 +1053,7 @@ def to_camel_case(string):
     >>> to_camel_case("hello_world")
     'helloWorld'
     >>> to_camel_case("hello_world_yes")
-    'helloWorldYes
+    'helloWorldYes'
     """
     parts = string.split('_')
     ret = parts[0]
