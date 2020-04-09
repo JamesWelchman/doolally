@@ -830,6 +830,90 @@ class TagObject(ObjectCollection):
         return f"{name}(" + ",".join(tags) + ")"
 
 
+class StaticTypeObject(ObjectCollection):
+    """
+    StaticTypeObject puts no constraint on the keys
+    used in the object, however all values have a static
+    type.
+
+    >>> s = StaticTypeObject(element_field=Number())
+    >>> s
+    StaticTypeObject(Number())
+    >>> ctx = Context()
+    >>> ctx.push_element_field("data", s)
+    >>> t = Tokenizer({"hello": 1, "world": 2})
+    >>> s.validate_collection(ctx, t)
+    """
+
+    def __init__(self,
+                 required=False,
+                 min_length=0,
+                 max_length=-1,
+                 element_field=None,
+                 validator=None):
+        super().__init__(
+            required=required,
+            min_length=min_length,
+            max_length=max_length,
+            validator=validator,
+        )
+        self.element_field = element_field
+
+    def validate_collection(self, ctx, tokenizer):
+        collection = self.validate_leading_token(ctx, tokenizer)
+        self.validate_length(ctx, collection)
+
+        while True:
+            token = tokenizer.next()
+            # Break when we leave the object
+            if token.ident == '}':
+                break
+
+            # Decide which function to call
+            elem_field = self.element_field
+            switch_type = None
+            if elem_field.is_union():
+                if isinstance(token.value, JSON_PRIMATIVES):
+                    switch_type = "atom"
+                elif isinstance(token.value, JSON_COLLECTIONS):
+                    switch_type = "collection"
+                else:
+                    # Something weird has come from the tokenizer
+                    error = f"invalid token value {token.value}"
+                    raise RuntimeError(error)
+            elif elem_field.is_atomic():
+                switch_type = "atom"
+            elif elem_field.is_collection():
+                switch_type = "collection"
+            else:
+                # A programming error
+                error = f"not an element field {elem_field}"
+                raise RuntimeError(error)
+
+            ctx.push_element_field(token.ident, elem_field)
+            try:
+                if switch_type == "atom":
+                    elem_field.validate_atomic(ctx, token.value)
+                else:
+                    elem_field.validate_collection(ctx, tokenizer)
+            finally:
+                ctx.pop_element_field()
+
+    def type_info(self, recurse=False):
+        name = self.__class__.__name__
+        if recurse:
+            return f"{name}(..)"
+
+        tags = []
+        if self.min_length != 0:
+            tags.append(f"min_length={self.min_length}")
+        if self.max_length != -1:
+            tags.append(f"max_length={self.max_length}")
+
+        elem_info = self.element_field.type_info(recurse=True)
+        tags.append(elem_info)
+        return f"{name}(" + ",".join(tags) + ")"
+
 class SchemaLessObject(ObjectCollection):
     """
     >>> SchemaLessObject()
