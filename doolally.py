@@ -5,6 +5,7 @@ doolally is a Python JSON schema validator
 import sys
 from collections import namedtuple
 from itertools import chain
+from functools import partial
 from hashlib import md5
 
 
@@ -1464,3 +1465,142 @@ def to_camel_case(string):
     for p in parts[1:]:
         ret += p.title()
     return ret
+
+
+def call_many(*callables):
+    """
+    call_many will execute a sequence of callables
+    when it it _itself_ called. It returns a tuple
+    of the calculated values. It is not consumable
+    and the returned callable may be used multiple
+    times.
+
+    >>> a = call_many(lambda: 1, lambda: 2)
+    >>> a()
+    (1, 2)
+    >>> a()
+    (1, 2)
+
+    >>> b = call_many(lambda x, y: x + y, lambda x, y: x * y)
+    >>> b(5, 10)
+    (15, 50)
+    """
+    def execute(*args):
+        return tuple(c(*args) for c in callables)
+    return execute
+
+
+def validate_whitelist(whitelist, ctx_err, value):
+    """
+    validate_whitelist checks if a value is in a given
+    whitelist.
+
+    >>> def ctx_err(error, *args):
+    ...    return ValidationValueError(error.format(*args))
+    >>> validate_whitelist({1, 2, 3}, ctx_err, 3)
+    >>> validate_whitelist({1, 2, 3}, ctx_err, 1)
+    >>> validate_whitelist({"ab", "cd"}, ctx_err, "ab")
+    >>> validate_whitelist({"ab", "cd"}, ctx_err, "xyz")
+    Traceback (most recent call last):
+    ...
+    doolally.ValidationValueError: value (xyz) not in whitelist
+    """
+    if value not in whitelist:
+        error = "value ({!s}) not in whitelist"
+        raise ctx_err(error, value)
+
+
+# Enums
+############
+
+class IntegerEnum(Number):
+    """
+    IntegerEnum is an integer which must come from a whitelist
+    of values.
+
+    >>> i = IntegerEnum(whitelist={1, 2, 3})
+    >>> i
+    IntegerEnum(int)
+    >>> i.jschema()
+    {'type': 'integer', 'enum': [1, 2, 3]}
+    >>> ctx = Context()
+    >>> ctx.push_element_field("intValue", i)
+    >>> i.validate_atomic(ctx, 1)
+    >>> i.validate_atomic(ctx, 3)
+    """
+    def __init__(self,
+                 required=False,
+                 signed=True,
+                 validator=None,
+                 title="",
+                 description="",
+                 whitelist=None):
+
+        self.whitelist = set(whitelist or [])
+
+        validator = call_many(
+            partial(validate_whitelist, self.whitelist),
+            validator or no_validate,
+        )
+        super().__init__(
+            required=required,
+            signed=signed,
+            is_int=True,
+            validator=validator,
+            title=title,
+            description=description,
+        )
+
+    def jschema(self):
+        jschema = {'type': "integer"}
+        if len(self.whitelist) < 10:
+            jschema['enum'] = sorted(self.whitelist)
+        else:
+            jschema['enum'] = list(self.whitelist[:5] + ['..'])
+
+        return jschema
+
+
+class StringEnum(String):
+    """
+    StringEnum is a string which must come from a whitelist
+    of values.
+
+    >>> s = StringEnum(whitelist={"ab", "cde", "z"})
+    >>> s
+    StringEnum()
+    >>> s.jschema()
+    {'type': 'string', 'enum': ['ab', 'cde', 'z']}
+    >>> ctx = Context()
+    >>> ctx.push_element_field("stringValue", s)
+    >>> s.validate_atomic(ctx, "ab")
+    >>> s.validate_atomic(ctx, "z")
+    """
+    def __init__(self,
+                 required=False,
+                 validator=None,
+                 title="",
+                 description="",
+                 whitelist=None):
+
+        self.whitelist = set(whitelist or [])
+
+        validator = call_many(
+            partial(validate_whitelist, self.whitelist),
+            validator or no_validate,
+        )
+        super().__init__(
+            required=required,
+            validator=validator,
+            title=title,
+            description=description,
+        )
+
+    def jschema(self):
+        jschema = {'type': "string"}
+        if len(self.whitelist) < 5:
+            jschema['enum'] = sorted(self.whitelist)
+        else:
+            jschema['enum'] = list(self.whitelist[:5]) + ['..']
+
+        return jschema
