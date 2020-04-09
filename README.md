@@ -13,12 +13,16 @@ from doolally import (
     String,
     Number,
     validate,
+    jsonschema,
     ValidationValueError,
 )
 
 class Person(Schema):
-    name = String(required=True)
-    age = Number(required=True, is_int=True, signed=False)
+    jsonschema_description = "A Person instance"
+
+    name = String(required=True, description="Full name of Person")
+    age = Number(required=True, is_int=True, signed=False,
+                 description="How old the person is")
 
 # This will pass just fine
 validate({"name": "John", "age": 34}, Person)
@@ -28,12 +32,18 @@ try:
     validate({"wrongKey": "John"}, Person)
 except ValidationValueError as exc:
     print(exc)
+
+# A newline + jsonschema
+print()
+print(jsonschema(Person))
 ```
 
 Output:
 
 ```
 [:Person(name(required,String()), age(required,Number(unsigned,int)))] - unrecognised key (wrongKey)
+
+{'type': 'object', 'required': ['name', 'age'], 'properties': {'name': {'type': 'string', 'title': 'name', 'description': 'Full name of Person'}, 'age': {'type': 'integer', 'minimum': 0, 'title': 'age', 'description': 'How old the person is'}}, 'additionalProperties': False, 'title': 'Person', 'description': 'A Person instance'}
 ```
 
 Project Goals:

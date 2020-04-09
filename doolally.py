@@ -17,6 +17,7 @@ if sys.hash_info.width != 64:
 __author__ = "James Welchman"
 __all__ = [
     "validate",
+    "jsonschema",
     "Schema",
     "StaticTypeArray",
     "TagObject",
@@ -37,7 +38,7 @@ __all__ = [
 JSON_PRIMATIVES = (int, float, str, bool, type(None))
 JSON_COLLECTIONS = (list, dict)
 
-# validate function
+# validate/jsonschema functions
 #####################
 
 def validate(json, schema):
@@ -47,6 +48,10 @@ def validate(json, schema):
     ctx.push_element_field("", instance)
     tokenizer = Tokenizer(json)
     instance.validate_collection(ctx, tokenizer)
+
+
+def jsonschema(schema):
+    return schema().jsonschema()
 
 
 # Exceptions
@@ -283,6 +288,14 @@ class SchemaMeta(type):
         attrs['doolally_required_fields'] = set(
             k for k, v in fields.items() if v.required
         )
+
+        # If the fields don't have a custom title
+        # then use the name of the key from this schema
+        for attr_name, field in fields.items():
+            if not field.title:
+                field.title = attr_name
+
+        # Build the class
         return super().__new__(cls, name, bases, attrs)
 
     def __repr__(self):
@@ -293,9 +306,15 @@ class SchemaMeta(type):
 ###################
 
 class ElementField:
-    def __init__(self, required=False, validator=None):
+    def __init__(self,
+                 required=False,
+                 validator=None,
+                 title="",
+                 description=""):
         self.required = required
         self.validator = validator or no_validate
+        self.title = title
+        self.description = description
 
     def validate_atomic(self, ctx, value):
         raise NotImplementedError
@@ -318,8 +337,21 @@ class ElementField:
     def __repr__(self):
         return self.type_info()
 
-    def jsonschema(self):
+    def jschema(self):
         raise NotImplementedError
+
+    def jsonschema(self):
+        jschema = self.jschema()
+        if self.title:
+            jschema['title'] = self.title
+        else:
+            jschema['title'] = "title"
+        if self.description:
+            jschema['description'] = self.description
+        else:
+            jschema['description'] = self.__class__.__name__
+
+        return jschema
     
     def __hash___(self):
         """
@@ -357,10 +389,14 @@ class CollectionElement(ElementField):
                  required=False,
                  min_length=0,
                  max_length=-1,
-                 validator=None):
+                 validator=None,
+                 title="",
+                 description=""):
         super().__init__(
             required=required,
             validator=validator,
+            title=title,
+            description=description,
         )
         self.min_length = min_length
         self.max_length = max_length
@@ -420,10 +456,14 @@ class Union(ElementField):
     def __init__(self,
                  required=False,
                  element_fields=None,
-                 validator=None):
+                 validator=None,
+                 title="",
+                 description=""):
         super().__init__(
             required=required,
             validator=validator,
+            title=title,
+            description=description,
         )
         self._atomic_fields = []
         self._collection_fields = []
@@ -500,7 +540,7 @@ class Union(ElementField):
 
         return f"{name}({info})"
 
-    def jsonschema(self):
+    def jschema(self):
         elems = []
         iterator = chain(self._atomic_fields,
                          self._collection_fields)
@@ -519,19 +559,19 @@ class Number(AtomicElement):
     >>> n.validate_atomic(ctx, -15.4)
     >>> n
     Number()
-    >>> n.jsonschema()
+    >>> n.jschema()
     {'type': 'number'}
 
     >>> n = Number(signed=False, is_int=True)
     >>> n
     Number(unsigned,int)
-    >>> n.jsonschema()
+    >>> n.jschema()
     {'type': 'integer', 'minimum': 0}
 
     >>> n = Number(min_value=0, max_value=90)
     >>> n
     Number(min_value=0,max_value=90)
-    >>> n.jsonschema()
+    >>> n.jschema()
     {'type': 'number', 'minimum': 0, 'maximum': 90}
     """
     def __init__(self,
@@ -540,10 +580,14 @@ class Number(AtomicElement):
                  is_int=False,
                  min_value=None,
                  max_value=None,
-                 validator=None):
+                 validator=None,
+                 title="",
+                 description=""):
         super().__init__(
             required=required,
             validator=validator,
+            title=title,
+            description=description,
         )
         self.signed = signed
         self.is_int = is_int
@@ -598,7 +642,7 @@ class Number(AtomicElement):
     
         return f"{name}(" + ",".join(tags) + ")"
 
-    def jsonschema(self):
+    def jschema(self):
         jschema = {}
         if self.is_int:
             jschema['type'] = "integer"
@@ -621,7 +665,7 @@ class String(AtomicElement):
     >>> s = String()
     >>> s
     String()
-    >>> s.jsonschema()
+    >>> s.jschema()
     {'type': 'string'}
     >>> ctx = Context()
     >>> ctx.push_element_field("key", s)
@@ -630,17 +674,21 @@ class String(AtomicElement):
     >>> s = String(min_length=3, max_length=6)
     >>> s
     String(min_length=3,max_length=6)
-    >>> s.jsonschema()
+    >>> s.jschema()
     {'type': 'string', 'minLength': 3, 'maxLength': 6}
     """
     def __init__(self,
                  required=False,
                  min_length=0,
                  max_length=-1,
-                 validator=None):
+                 validator=None,
+                 title="",
+                 description=""):
         super().__init__(
             required=required,
             validator=validator,
+            title=title,
+            description=description,
         )
         self.min_length = min_length
         self.max_length = max_length
@@ -672,7 +720,7 @@ class String(AtomicElement):
 
         return f"{name}(" + ",".join(tags) + ")"
 
-    def jsonschema(self):
+    def jschema(self):
         jschema = {"type": "string"}
         if self.min_length != 0:
             jschema['minLength'] = self.min_length
@@ -687,7 +735,7 @@ class Bool(AtomicElement):
     >>> b = Bool()
     >>> b
     Bool()
-    >>> b.jsonschema()
+    >>> b.jschema()
     {'type': 'boolean'}
     >>> ctx = Context()
     >>> ctx.push_element_field("flag", b)
@@ -700,7 +748,7 @@ class Bool(AtomicElement):
     def type_info(self, recurse=False):
         return "Bool()"
 
-    def jsonschema(self):
+    def jschema(self):
         return {"type": "boolean"}
 
 
@@ -709,7 +757,7 @@ class Null(AtomicElement):
     >>> n = Null()
     >>> n
     Null()
-    >>> n.jsonschema()
+    >>> n.jschema()
     {'type': 'null'}
     >>> ctx = Context()
     >>> ctx.push_element_field("flag", n)
@@ -721,7 +769,7 @@ class Null(AtomicElement):
     def type_info(self, recurse=False):
         return "Null()"
 
-    def jsonschema(self):
+    def jschema(self):
         return {"type": "null"}
     
 
@@ -734,7 +782,11 @@ def union_with_null(required=False,
     >>> u
     Union(String(), Null())
     >>> types = [{'type': "string"}, {"type": "null"}]
-    >>> u.jsonschema() == {"anyOf": types}
+    >>> types[0]['title'] = "title"
+    >>> types[0]['description'] = "String"
+    >>> types[1]['title'] = "title"
+    >>> types[1]['description'] = "Null"
+    >>> u.jschema() == {"anyOf": types}
     True
     """
     element_fields = element_fields or []
@@ -750,13 +802,19 @@ class AnyAtomic(AtomicElement):
     >>> a = AnyAtomic()
     >>> a
     AnyAtomic()
-    >>> a.jsonschema()
+    >>> a.jschema()
     {'type': ['number', 'integer', 'string', 'boolean', 'null']}
     """
-    def __init__(self, required=False, validator=None):
+    def __init__(self,
+                 required=False,
+                 validator=None,
+                 title="",
+                 description=""):
         super().__init__(
             required=required,
             validator=validator,
+            title=title,
+            description=description,
         )
 
     def validate_atomic(self, ctx, value):
@@ -765,7 +823,7 @@ class AnyAtomic(AtomicElement):
     def type_info(self, recurse=False):
         return f"{self.__class__.__name__}()"
 
-    def jsonschema(self):
+    def jschema(self):
         return {
             "type": [
                 "number",
@@ -800,8 +858,12 @@ class StaticTypeArray(ArrayCollection):
     >>> s = StaticTypeArray(element_field=Number())
     >>> s
     StaticTypeArray(Number())
-    >>> s.jsonschema()
-    {'type': 'array', 'items': {'type': 'number'}}
+    >>> jschema = {'type': 'array'}
+    >>> jschema['items'] = {'type': 'number'}
+    >>> jschema['items']['title'] = 'title'
+    >>> jschema['items']['description'] = 'Number'
+    >>> s.jschema() == jschema
+    True
     >>> ctx = Context()
     >>> ctx.push_element_field("number", s)
     >>> t = Tokenizer([1, 2, 3])
@@ -812,10 +874,14 @@ class StaticTypeArray(ArrayCollection):
                  min_length=0,
                  max_length=-1,
                  element_field=None,
-                 validator=None):
+                 validator=None,
+                 title="",
+                 description=""):
         super().__init__(
             required=required,
             validator=validator,
+            title=title,
+            description=description,
         )
         self.min_length = min_length
         self.max_length = max_length
@@ -880,7 +946,7 @@ class StaticTypeArray(ArrayCollection):
         tags.append(elem_info)
         return f"{name}(" + ",".join(tags) + ")"
 
-    def jsonschema(self):
+    def jschema(self):
         jschema = {"type": "array"}
         jschema['items'] = self.element_field.jsonschema()
         return jschema
@@ -897,7 +963,7 @@ class TagObject(ObjectCollection):
     TagObject()
     >>> jschema = {"type": "object", "properties": {}}
     >>> jschema["additionalProperties"] = {"type": "string"}
-    >>> t.jsonschema() == jschema
+    >>> t.jschema() == jschema
     True
 
     >>> t = TagObject(max_length=10)
@@ -906,7 +972,7 @@ class TagObject(ObjectCollection):
     >>> jschema = {"type": "object", "properties": {}}
     >>> jschema["additionalProperties"] = {"type": "string"}
     >>> jschema['maxLength'] = 10
-    >>> t.jsonschema() == jschema
+    >>> t.jschema() == jschema
     True
     >>> ctx = Context()
     >>> ctx.push_element_field("tags", t)
@@ -948,7 +1014,7 @@ class TagObject(ObjectCollection):
 
         return f"{name}(" + ",".join(tags) + ")"
 
-    def jsonschema(self):
+    def jschema(self):
         jschema = {"type": "object"}
         jschema['properties'] = {}
         jschema["additionalProperties"] = { "type": "string" }
@@ -971,7 +1037,9 @@ class StaticTypeObject(ObjectCollection):
     StaticTypeObject(Number())
     >>> jschema = {"type": "object", "properties": {}}
     >>> jschema["additionalProperties"] = {"type": "number"}
-    >>> s.jsonschema() == jschema
+    >>> jschema["additionalProperties"]['title'] = 'title'
+    >>> jschema["additionalProperties"]['description'] = 'Number'
+    >>> s.jschema() == jschema
     True
     >>> ctx = Context()
     >>> ctx.push_element_field("data", s)
@@ -985,12 +1053,16 @@ class StaticTypeObject(ObjectCollection):
                  max_length=-1,
                  element_field=None,
                  unique_items=False,
-                 validator=None):
+                 validator=None,
+                 title="",
+                 description=""):
         super().__init__(
             required=required,
             min_length=min_length,
             max_length=max_length,
             validator=validator,
+            title="",
+            description="",
         )
         self.element_field = element_field
         if unique_items:
@@ -1069,7 +1141,7 @@ class StaticTypeObject(ObjectCollection):
         tags.append(elem_info)
         return f"{name}(" + ",".join(tags) + ")"
 
-    def jsonschema(self):
+    def jschema(self):
         jschema = {"type": "object", "properties": {}}
         elem_schema = self.element_field.jsonschema()
         jschema['additionalProperties'] = elem_schema
@@ -1090,7 +1162,7 @@ class SchemaLessObject(StaticTypeObject):
     SchemaLessObject()
     >>> jschema = {'type': 'object', 'properties': {}}
     >>> jschema['additionalProperties'] = Any().jsonschema()
-    >>> s.jsonschema() == jschema
+    >>> s.jschema() == jschema
     True
 
     >>> s = SchemaLessObject(min_length=2)
@@ -1105,13 +1177,17 @@ class SchemaLessObject(StaticTypeObject):
                  required=False,
                  min_length=0,
                  max_length=-1,
-                 validator=None):
+                 validator=None,
+                 title="",
+                 description=""):
         super().__init__(
             required=required,
             min_length=min_length,
             max_length=max_length,
             element_field=Any(),
             validator=validator,
+            title=title,
+            description=description,
         )
 
     def type_info(self, recurse=False):
@@ -1129,6 +1205,25 @@ class SchemaLessObject(StaticTypeObject):
 
 
 class Schema(ObjectCollection, metaclass=SchemaMeta):
+    jsonschema_description = ""
+
+    def __init__(self,
+                 required=False,
+                 min_length=0,
+                 max_length=-1,
+                 validator=None):
+        super().__init__(
+            required=required,
+            min_length=min_length,
+            max_length=max_length,
+            validator=validator,
+            title=self.__class__.__name__,
+            description=(
+                self.__class__.jsonschema_description or
+                self.__class__.__name__
+            ),
+        )
+
     def validate_collection(self, ctx, tokenizer):
         collection = self.validate_leading_token(ctx, tokenizer)
         self.validate_length(ctx, collection)
@@ -1217,7 +1312,7 @@ class Schema(ObjectCollection, metaclass=SchemaMeta):
         info += f"num_optional={num_optional}"
         return f"{name}({info})"
 
-    def jsonschema(self):
+    def jschema(self):
         jschema = {"type": "object"}
         required = []
         properties = {}
@@ -1250,7 +1345,7 @@ class AnyCollection(CollectionElement):
     >>> a = AnyCollection()
     >>> a
     AnyCollection()
-    >>> a.jsonschema()
+    >>> a.jschema()
     {'type': ['array', 'object']}
     >>> ctx = Context()
     >>> ctx.push_element_field(2, a)
@@ -1283,7 +1378,7 @@ class AnyCollection(CollectionElement):
 
         return f"{name}(" + ",".join(tags) + ")"
 
-    def jsonschema(self):
+    def jschema(self):
         jschema = {"type": ["array", "object"]}
         if self.min_length != 0:
             jschema['minLength'] = self.min_length
@@ -1305,29 +1400,35 @@ class Any(Union):
     >>> t = Tokenizer(["a", "b", "c"])
     >>> a.validate_collection(ctx, t)
     """
-    def __init__(self, required=False, validator=None):
+    def __init__(self,
+                 required=False,
+                 validator=None,
+                 title="",
+                 description=""):
         super().__init__(
             required=required,
             element_fields=[AnyAtomic(), AnyCollection()],
             validator=validator,
+            title=title,
+            description=description,
         )
 
     def type_info(self, recurse=False):
         name = self.__class__.__name__
         return f"{name}()"
 
-    def jsonschema(self):
-        jschema = {}
-        jschema['type'] = [
-            "number",
-            "integer",
-            "string",
-            "boolean",
-            "null",
-            "object",
-            "array",
-        ]
-        return jschema
+    def jschema(self):
+        return {
+            'type': [
+                "number",
+                "integer",
+                "string",
+                "boolean",
+                "null",
+                "object",
+                "array",
+            ],
+        }
 
 
 # Misc functions
