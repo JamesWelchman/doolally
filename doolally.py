@@ -2,17 +2,10 @@
 doolally is a Python JSON schema validator
 """
 
-import sys
 from collections import namedtuple
 from itertools import chain
 from functools import partial
 from hashlib import md5
-
-
-# Import time assert
-# We need 64bit hashes to generate documentIds
-if sys.hash_info.width != 64:
-    raise RuntimeError("hash width not 64")
 
 
 __author__ = "James Welchman"
@@ -317,6 +310,10 @@ class ElementField:
         self.title = title
         self.description = description
 
+        # We lazily calculate this but
+        # store it once it is computed
+        self._jschema_dict = {}
+
     def validate_atomic(self, ctx, value):
         raise NotImplementedError
 
@@ -342,6 +339,9 @@ class ElementField:
         raise NotImplementedError
 
     def jsonschema(self):
+        if self._jschema_dict:
+            return self._jschema_dict
+
         jschema = self.jschema()
         if self.title:
             jschema['title'] = self.title
@@ -352,26 +352,8 @@ class ElementField:
         else:
             jschema['description'] = self.__class__.__name__
 
-        return jschema
-    
-    def __hash___(self):
-        """
-        Python hashes differ between different invocations
-        of the python interpreter. We make our hashes
-        deterministic based on their jsonschema.
-        """
-        info = self.jsonschema()
-        digest = md5(bytes(info, encoding='utf8')).digest()
-        # Fold the 16 bytes into 8
-        array = bytearray(8)
-        for n in range (8):
-            array[n] = digest[n] ^ digest[n+8]
-
-        # Return a u64
-        return int.from_bytes(array, "big", signed=False)
-
-    def __eq__(self, other):
-        return hash(self) == hash(other)
+        self._jschema_dict = jschema
+        return self._jschema_dict
 
 
 class AtomicElement(ElementField):
@@ -520,7 +502,7 @@ class Union(ElementField):
         else:
             # None of the element fields match
             raise ctx.ctx_err(
-                "no element_field un union passes validation"
+                "no element_field in union passes validation"
             )
 
     def type_info(self, recurse=False):
@@ -1018,7 +1000,7 @@ class TagObject(ObjectCollection):
     def jschema(self):
         jschema = {"type": "object"}
         jschema['properties'] = {}
-        jschema["additionalProperties"] = { "type": "string" }
+        jschema["additionalProperties"] = {"type": "string"}
         if self.min_length != 0:
             jschema['minLength'] = self.min_length
         if self.max_length != -1:
@@ -1062,8 +1044,8 @@ class StaticTypeObject(ObjectCollection):
             min_length=min_length,
             max_length=max_length,
             validator=validator,
-            title="",
-            description="",
+            title=title,
+            description=description,
         )
         self.element_field = element_field
         if unique_items:
@@ -1329,7 +1311,7 @@ class Schema(ObjectCollection, metaclass=SchemaMeta):
         return jschema
 
 
-def schema_factory(name, fields, bases=None):
+def schema_factory(name, fields=None, bases=None):
     """
     >>> fields = {"name": String(required=True), "age": Number()}
     >>> my_schema = schema_factory("MySchema", fields)
